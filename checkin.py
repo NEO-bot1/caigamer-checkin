@@ -57,13 +57,12 @@ async def run_checkin():
 
             # Step 2: Login popup may auto-show on page load; handle both cases
             logger.info("Checking if login popup is already visible...")
-            # Try to find any visible text input + password input in the page
             all_inputs = await page.query_selector_all("input")
             has_text_input = False
             has_password_input = False
             for inp in all_inputs:
                 input_type = await inp.get_attribute("type")
-                if input_type == "text" or input_type == "email":
+                if input_type in ("text", "email"):
                     has_text_input = True
                 elif input_type == "password":
                     has_password_input = True
@@ -133,37 +132,4 @@ async def run_checkin():
                 try:
                     await sign_element.click()
                     await asyncio.sleep(3)
-                    await take_screenshot(page, "05_after_sign_click")
-
-                    # Verify sign-in success
-                    sign_element = await page.query_selector("#sign_title")
-                    if sign_element:
-                        sign_text = await sign_element.inner_text()
-                        logger.info(f"Sign-in text after click: '{sign_text}'")
-                        if "今日已签到" in sign_text:
-                            logger.info("Sign-in completed successfully!")
-                        else:
-                            logger.warning("Sign-in text does not indicate success. Please verify manually.")
-                    else:
-                        logger.warning("Sign-in element disappeared after click.")
-                except Exception as e:
-                    logger.error(f"Failed to click sign-in element: {e}")
-                    await take_screenshot(page, "05_sign_error")
-
-            logger.info("Check-in workflow completed.")
-            return 0
-
-        except Exception as e:
-            logger.exception(f"Unexpected error during check-in: {e}")
-            if "page" in locals():
-                await take_screenshot(page, "error")
-            return 1
-
-        finally:
-            if browser:
-                logger.info("Closing browser...")
-                await browser.close()
-
-if __name__ == "__main__":
-    exit_code = asyncio.run(run_checkin())
-    sys.exit(exit_code)
+                    await take_screenshot(page, "
