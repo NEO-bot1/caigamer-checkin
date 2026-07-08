@@ -37,6 +37,10 @@ async def run_checkin():
             browser = await p.chromium.launch(
                 headless=True,
                 args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--disable-blink-features=AutomationControlled",
                     "--font-render-hinting=none",
                     "--disable-font-subpixel-positioning",
                     "--enable-font-antialiasing"
@@ -45,17 +49,36 @@ async def run_checkin():
             context = await browser.new_context(
                 viewport={"width": 1920, "height": 1080},
                 locale="zh-CN",
-                timezone_id="Asia/Shanghai"
+                timezone_id="Asia/Shanghai",
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
             )
+            # Hide webdriver property to avoid detection
+            await context.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined
+                });
+            """)
             page = await context.new_page()
 
             # Step 1: Navigate to homepage
             logger.info("Navigating to https://caigamer.cn/ ...")
-            await page.goto("https://caigamer.cn/", wait_until="domcontentloaded", timeout=60000)
-            await asyncio.sleep(3)
+            response = await page.goto("https://caigamer.cn/", wait_until="domcontentloaded", timeout=60000)
+            logger.info(f"Response status: {response.status if response else 'None'}")
+            
+            # Give JS time to render content
+            await asyncio.sleep(5)
+            
+            title = await page.title()
+            logger.info(f"Page title: '{title}'")
             await take_screenshot(page, "01_homepage")
 
-            # Step 2: Login popup may auto-show on page load; handle both cases
+            # Debug: if page seems empty, dump HTML
+            if not title or title.strip() == "":
+                html = await page.content()
+                logger.warning("Page title is empty!")
+                logger.info(f"HTML (first 800 chars): {html[:800]}")
+
+            # Step 2: Check if login popup is already visible
             logger.info("Checking if login popup is already visible...")
             all_inputs = await page.query_selector_all("input")
             has_text_input = False
@@ -132,4 +155,37 @@ async def run_checkin():
                 try:
                     await sign_element.click()
                     await asyncio.sleep(3)
-                    await take_screenshot(page, "
+                    await take_screenshot(page, "05_after_sign_click")
+
+                    # Verify sign-in success
+                    sign_element = await page.query_selector("#sign_title")
+                    if sign_element:
+                        sign_text = await sign_element.inner_text()
+                        logger.info(f"Sign-in text after click: '{sign_text}'")
+                        if "今日已签到" in sign_text:
+                            logger.info("Sign-in completed successfully!")
+                        else:
+                            logger.warning("Sign-in text does not indicate success. Please verify manually.")
+                    else:
+                        logger.warning("Sign-in element disappeared after click.")
+                except Exception as e:
+                    logger.error(f"Failed to click sign-in element: {e}")
+                    await take_screenshot(page, "05_sign_error")
+
+            logger.info("Check-in workflow completed.")
+            return 0
+
+        except Exception as e:
+            logger.exception(f"Unexpected error during check-in: {e}")
+            if "page" in locals():
+                await take_screenshot(page, "error")
+            return 1
+
+        finally:
+            if browser:
+                logger.info("Closing browser...")
+                await browser.close()
+
+if __name__ == "__main__":
+    exit_code = asyncio.run(run_checkin())
+    sys.exit(exit_code)
