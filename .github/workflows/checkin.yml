@@ -1,0 +1,38 @@
+name: Caigamer Daily Checkin
+
+on:
+  schedule:
+    - cron: '0 1 * * *'  # 每天 UTC 01:00 = 北京时间 09:00
+  workflow_dispatch:      # 允许手动触发
+
+jobs:
+  checkin:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium
+      
+      - name: Run checkin
+        env:
+          CAIGAMER_USERNAME: ${{ secrets.CAIGAMER_USERNAME }}
+          CAIGAMER_PASSWORD: ${{ secrets.CAIGAMER_PASSWORD }}
+        run: python checkin.py
+      
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: '*.png'
+          if-no-files-found: ignore
