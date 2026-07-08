@@ -2,12 +2,13 @@ name: Caigamer Daily Checkin
 
 on:
   schedule:
-    - cron: '0 1 * * *'  # 每天 UTC 01:00 = 北京时间 09:00
-  workflow_dispatch:      # 允许手动触发
+    - cron: '0 1 * * *'
+  workflow_dispatch:
 
 jobs:
   checkin:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     
     steps:
       - name: Checkout code
@@ -29,7 +30,7 @@ jobs:
           CAIGAMER_PASSWORD: ${{ secrets.CAIGAMER_PASSWORD }}
         run: python checkin.py
       
-      - name: Upload screenshots
+      - name: Upload all screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
