@@ -20,14 +20,12 @@ async def checkin():
                 "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
-                "--disable-web-security",
-                "--disable-features=IsolateOrigins,site-per-process"
             ]
         )
         
         context = await browser.new_context(
             viewport={"width": 1920, "height": 1080},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.0"
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
         
         page = await context.new_page()
@@ -35,88 +33,77 @@ async def checkin():
         try:
             print(f"[{datetime.now()}] 访问网站...")
             
-            # 增加超时到 60 秒
+            # 只等待 DOM 加载，不等待所有资源
             await page.goto("https://caigamer.cn/", wait_until="domcontentloaded", timeout=60000)
             await asyncio.sleep(3)
             
             await page.screenshot(path="page_start.png")
             print("已截图: page_start.png")
             
-            # 检查是否已经登录（看右上角是否有用户头像/用户名）
-            print("检查登录状态...")
-            user_element = await page.query_selector(".user-name, .avatar, [class*='user']")
+            # 查找并点击登录按钮
+            print("查找登录按钮...")
+            login_btn = await page.query_selector("a[href*='login']")
             
-            if user_element:
-                print("可能已经登录")
-            else:
-                print("未登录，尝试点击登录按钮...")
+            if login_btn:
+                print("找到登录按钮，点击...")
+                await login_btn.click()
+                await asyncio.sleep(2)  # 等待弹窗动画
                 
-                # 查找登录按钮（多种可能）
-                login_selectors = [
-                    "text=登录",
-                    "text=登入",
-                    "text=Sign in",
-                    ".login",
-                    "#login",
-                    "a[href*='login']",
-                    "[class*='login']",
-                    "button:has-text('登录')",
-                    "button:has-text('登入')"
-                ]
+                # 不等待页面加载，直接截图看弹窗
+                await page.screenshot(path="page_login_popup.png")
+                print("已截图: page_login_popup.png")
                 
-                login_btn = None
-                for sel in login_selectors:
-                    try:
-                        login_btn = await page.query_selector(sel)
-                        if login_btn:
-                            print(f"找到登录按钮: {sel}")
-                            break
-                    except:
-                        continue
+                # 等待弹窗中的输入框出现
+                print("等待登录表单...")
+                await page.wait_for_selector("input[type='text'], input[type='email'], input[name='username'], input[name='email'], input[placeholder*='邮箱'], input[placeholder*='用户名'], input[placeholder*='email']", timeout=10000)
+                await asyncio.sleep(1)
                 
-                if login_btn:
-                    await login_btn.click()
-                    await asyncio.sleep(2)
-                    await page.screenshot(path="page_login_clicked.png")
-                    print("已点击登录，截图保存")
+                # 查找输入框
+                print("查找输入框...")
+                all_inputs = await page.query_selector_all("input")
+                print(f"找到 {len(all_inputs)} 个 input 元素")
+                
+                username_input = None
+                password_input = None
+                
+                for inp in all_inputs:
+                    input_type = await inp.get_attribute("type") or ""
+                    input_name = await inp.get_attribute("name") or ""
+                    placeholder = await inp.get_attribute("placeholder") or ""
                     
-                    # 等待弹窗出现
-                    print("等待登录弹窗...")
-                    await page.wait_for_selector("input[type='text'], input[type='email'], input[name='username'], input[name='email'], input[placeholder*='邮箱'], input[placeholder*='用户名']", timeout=10000)
+                    print(f"input: type={input_type}, name={input_name}, placeholder={placeholder}")
+                    
+                    if not username_input and input_type in ["text", "email"]:
+                        username_input = inp
+                    elif not password_input and input_type == "password":
+                        password_input = inp
+                
+                if username_input and password_input:
+                    print("填写登录信息...")
+                    await username_input.fill(USERNAME)
+                    await password_input.fill(PASSWORD)
                     await asyncio.sleep(1)
                     
-                    # 填写登录表单
-                    print("填写登录信息...")
+                    # 查找提交按钮
+                    submit_btn = await page.query_selector("button[type='submit'], button:has-text('登录'), button:has-text('登入'), button:has-text('Submit'), .submit, #submit, button[class*='submit']")
                     
-                    # 查找用户名输入框
-                    username_input = await page.query_selector("input[type='text'], input[type='email'], input[name='username'], input[name='email'], input[placeholder*='邮箱'], input[placeholder*='用户名']")
-                    password_input = await page.query_selector("input[type='password'], input[name='password']")
-                    
-                    if username_input and password_input:
-                        await username_input.fill(USERNAME)
-                        await password_input.fill(PASSWORD)
-                        await asyncio.sleep(1)
-                        
-                        # 点击登录提交
-                        submit_btn = await page.query_selector("button[type='submit'], button:has-text('登录'), button:has-text('登入'), button:has-text('Submit'), .submit, #submit")
-                        if submit_btn:
-                            await submit_btn.click()
-                            print("已提交登录")
-                        else:
-                            # 尝试按回车
-                            await password_input.press("Enter")
-                            print("按回车提交")
-                        
-                        await asyncio.sleep(3)
-                        await page.screenshot(path="page_after_login.png")
-                        print("登录后截图保存")
+                    if submit_btn:
+                        print("点击提交按钮...")
+                        await submit_btn.click()
                     else:
-                        print("未找到登录表单输入框")
-                        await page.screenshot(path="page_no_form.png")
+                        print("未找到提交按钮，按回车...")
+                        await password_input.press("Enter")
+                    
+                    await asyncio.sleep(3)
+                    await page.screenshot(path="page_after_login.png")
+                    print("登录后截图保存")
                 else:
-                    print("未找到登录按钮")
+                    print(f"未找到输入框: username={username_input is not None}, password={password_input is not None}")
+                    await page.screenshot(path="page_no_inputs.png")
+            else:
+                print("未找到登录按钮，检查是否已登录")
             
-            # 再次检查登录状态
+            # 检查当前状态
             print(f"当前URL: {page.url}")
             await page.screenshot(path="page_before_sign.png")
             
@@ -155,22 +142,11 @@ async def checkin():
                     await asyncio.sleep(2)
                     print("签到完成")
                     
-                    # 验证
                     await page.reload()
                     await asyncio.sleep(2)
                     await page.screenshot(path="page_after_sign.png")
             else:
-                print("未找到签到元素，可能页面结构不同")
-                # 尝试查找包含"签到"文本的任何元素
-                all_elements = await page.query_selector_all("*")
-                for el in all_elements:
-                    try:
-                        text = await el.inner_text()
-                        if "签到" in text:
-                            print(f"找到包含'签到'的元素: {text}")
-                            break
-                    except:
-                        continue
+                print("未找到签到元素")
             
             await page.screenshot(path="page_final.png")
             print("最终截图保存")
