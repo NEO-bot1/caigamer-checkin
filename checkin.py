@@ -115,15 +115,37 @@ async def run_checkin():
 
             # Step 6.5: Close welcome modal if present
             logger.info("Checking for welcome modal popup...")
-            close_btn = await page.query_selector("#isClose, button[data-bs-dismiss='modal']")
-            if close_btn:
-                logger.info("Welcome modal detected, closing it...")
-                try:
-                    await close_btn.click()
-                    await asyncio.sleep(2)
-                    await take_screenshot(page, "04b_modal_closed")
-                except Exception as e:
-                    logger.warning(f"Failed to click modal close button: {e}")
+            modal_exists = await page.evaluate("""
+                () => {
+                    return document.querySelector('.modal.show') !== null ||
+                           document.querySelector('.modal[style*="display: block"]') !== null;
+                }
+            """)
+            
+            if modal_exists:
+                logger.info("Welcome modal detected, closing it via JavaScript...")
+                await page.evaluate("""
+                    () => {
+                        // Method 1: Bootstrap 5 API
+                        var modalEl = document.querySelector('.modal.show');
+                        if (modalEl && typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+                            var modal = bootstrap.Modal.getInstance(modalEl);
+                            if (modal) modal.hide();
+                        }
+                        // Method 2: Force hide all modals and remove backdrop
+                        document.querySelectorAll('.modal').forEach(m => {
+                            m.classList.remove('show');
+                            m.style.display = 'none';
+                            m.setAttribute('aria-hidden', 'true');
+                        });
+                        document.querySelectorAll('.modal-backdrop').forEach(b => b.remove());
+                        document.body.classList.remove('modal-open');
+                        document.body.style.overflow = '';
+                        document.body.style.paddingRight = '';
+                    }
+                """)
+                await asyncio.sleep(1)
+                await take_screenshot(page, "04b_modal_closed")
             else:
                 logger.info("No welcome modal found.")
 
