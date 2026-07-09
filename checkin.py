@@ -126,13 +126,11 @@ async def run_checkin():
                 logger.info("Welcome modal detected, closing it via JavaScript...")
                 await page.evaluate("""
                     () => {
-                        // Method 1: Bootstrap 5 API
                         var modalEl = document.querySelector('.modal.show');
                         if (modalEl && typeof bootstrap !== 'undefined' && bootstrap.Modal) {
                             var modal = bootstrap.Modal.getInstance(modalEl);
                             if (modal) modal.hide();
                         }
-                        // Method 2: Force hide all modals and remove backdrop
                         document.querySelectorAll('.modal').forEach(m => {
                             m.classList.remove('show');
                             m.style.display = 'none';
@@ -166,7 +164,8 @@ async def run_checkin():
             else:
                 logger.info("Not signed in yet. Attempting to click sign-in element...")
                 try:
-                    await sign_element.click()
+                    # Use JavaScript click to bypass visibility/interaction checks
+                    await page.evaluate("el => el.click()", sign_element)
                     await asyncio.sleep(3)
                     await take_screenshot(page, "05_after_sign_click")
 
