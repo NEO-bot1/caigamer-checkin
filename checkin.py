@@ -37,10 +37,6 @@ async def run_checkin():
             browser = await p.chromium.launch(
                 headless=True,
                 args=[
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-gpu",
-                    "--disable-blink-features=AutomationControlled",
                     "--font-render-hinting=none",
                     "--disable-font-subpixel-positioning",
                     "--enable-font-antialiasing"
@@ -49,36 +45,17 @@ async def run_checkin():
             context = await browser.new_context(
                 viewport={"width": 1920, "height": 1080},
                 locale="zh-CN",
-                timezone_id="Asia/Shanghai",
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+                timezone_id="Asia/Shanghai"
             )
-            # Hide webdriver property to avoid detection
-            await context.add_init_script("""
-                Object.defineProperty(navigator, 'webdriver', {
-                    get: () => undefined
-                });
-            """)
             page = await context.new_page()
 
             # Step 1: Navigate to homepage
             logger.info("Navigating to https://caigamer.cn/ ...")
-            response = await page.goto("https://caigamer.cn/", wait_until="domcontentloaded", timeout=60000)
-            logger.info(f"Response status: {response.status if response else 'None'}")
-            
-            # Give JS time to render content
-            await asyncio.sleep(5)
-            
-            title = await page.title()
-            logger.info(f"Page title: '{title}'")
+            await page.goto("https://caigamer.cn/", wait_until="domcontentloaded", timeout=60000)
+            await asyncio.sleep(3)
             await take_screenshot(page, "01_homepage")
 
-            # Debug: if page seems empty, dump HTML
-            if not title or title.strip() == "":
-                html = await page.content()
-                logger.warning("Page title is empty!")
-                logger.info(f"HTML (first 800 chars): {html[:800]}")
-
-            # Step 2: Check if login popup is already visible
+            # Step 2: Login popup may auto-show on page load; handle both cases
             logger.info("Checking if login popup is already visible...")
             all_inputs = await page.query_selector_all("input")
             has_text_input = False
@@ -135,6 +112,20 @@ async def run_checkin():
             await password_input.press("Enter")
             await asyncio.sleep(5)
             await take_screenshot(page, "04_after_login")
+
+            # Step 6.5: Close welcome modal if present
+            logger.info("Checking for welcome modal popup...")
+            close_btn = await page.query_selector("#isClose, button[data-bs-dismiss='modal']")
+            if close_btn:
+                logger.info("Welcome modal detected, closing it...")
+                try:
+                    await close_btn.click()
+                    await asyncio.sleep(2)
+                    await take_screenshot(page, "04b_modal_closed")
+                except Exception as e:
+                    logger.warning(f"Failed to click modal close button: {e}")
+            else:
+                logger.info("No welcome modal found.")
 
             # Step 7: Check and perform sign-in
             logger.info("Checking sign-in status (#sign_title)...")
