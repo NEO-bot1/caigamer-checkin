@@ -164,9 +164,30 @@ async def run_checkin():
             else:
                 logger.info("Not signed in yet. Attempting to click sign-in element...")
                 try:
-                    # Use JavaScript click to bypass visibility/interaction checks
-                    await page.evaluate("el => el.click()", sign_element)
-                    await asyncio.sleep(3)
+                    # Click the closest clickable parent (a, button, .btn) instead of the span itself
+                    clicked = await page.evaluate("""
+                        () => {
+                            var el = document.querySelector('#sign_title');
+                            if (!el) return 'not-found';
+                            
+                            // Try to find the closest clickable parent
+                            var parent = el.closest('a, button, [onclick], .btn, [data-toggle]');
+                            if (parent) {
+                                parent.click();
+                                return 'clicked-parent: ' + parent.tagName + (parent.id ? '#' + parent.id : '');
+                            }
+                            
+                            // Fallback: click the span itself and dispatch a MouseEvent for bubbling
+                            el.click();
+                            var evt = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
+                            el.dispatchEvent(evt);
+                            return 'clicked-self';
+                        }
+                    """)
+                    logger.info(f"Click result: {clicked}")
+                    
+                    # Wait longer for AJAX response
+                    await asyncio.sleep(5)
                     await take_screenshot(page, "05_after_sign_click")
 
                     # Verify sign-in success
