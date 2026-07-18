@@ -190,12 +190,15 @@ async def ensure_login_popup(page: Page) -> None:
     """
     logger.info("Checking if login popup is already visible...")
     inputs = await page.query_selector_all("input")
-    has_text_input = any(
-        await inp.get_attribute("type") in ("text", "email") for inp in inputs
-    )
-    has_password_input = any(
-        await inp.get_attribute("type") == "password" for inp in inputs
-    )
+    has_text_input = False
+    has_password_input = False
+
+    for inp in inputs:
+        input_type = await inp.get_attribute("type")
+        if input_type in ("text", "email"):
+            has_text_input = True
+        elif input_type == "password":
+            has_password_input = True
 
     if has_text_input and has_password_input:
         logger.info("Login popup is already visible (auto-shown).")
@@ -408,8 +411,13 @@ async def run_checkin() -> int:
     主流程：读取环境变量 -> 打开主页 -> 登录 -> 处理弹窗 -> 判断签到状态 -> 点击签到 -> 验证结果。
     """
     username, password = get_credentials()
-    if not username or not password:
-        logger.error("Missing environment variables: CAIGAMER_USERNAME and/or CAIGAMER_PASSWORD")
+    missing = []
+    if not username:
+        missing.append("CAIGAMER_USERNAME")
+    if not password:
+        missing.append("CAIGAMER_PASSWORD")
+    if missing:
+        logger.error("Missing environment variables: %s", ", ".join(missing))
         return 1
 
     result = CheckinResult(status="failed", message="check-in workflow did not complete")
