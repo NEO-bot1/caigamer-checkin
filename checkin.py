@@ -52,6 +52,20 @@ async def run_checkin():
             )
             page = await context.new_page()
 
+            # 监听网络请求，捕获签到 API
+            signin_api_response = {}
+            async def handle_response(response):
+                url = response.url
+                if 'sign' in url.lower() or 'checkin' in url.lower() or 'qiandao' in url.lower():
+                    logger.info(f"Sign-in API detected: {url}")
+                    try:
+                        body = await response.text()
+                        signin_api_response['last'] = {'url': url, 'status': response.status, 'body': body[:500]}
+                        logger.info(f"Response status: {response.status}, body preview: {body[:200]}")
+                    except:
+                        pass
+            page.on("response", handle_response)
+
             # Step 1: Navigate to homepage
             logger.info("Navigating to https://caigamer.cn/ ...")
             await page.goto("https://caigamer.cn/", wait_until="domcontentloaded", timeout=60000)
@@ -75,11 +89,29 @@ async def run_checkin():
             else:
                 logger.info("Login popup not auto-shown, clicking login link...")
                 try:
-                    await page.click("a[href*='login']", timeout=10000)
-                    await asyncio.sleep(2)
+                    # 尝试多种可能的登录按钮选择器
+                    login_selectors = [
+                        "a[href*='login']",
+                        "a[href*='signin']",
+                        "[data-target*='login']",
+                        ".login-btn",
+                        "#login-btn",
+                        "a:has-text('登录')",
+                        "button:has-text('登录')",
+                        "a:has-text('Login')"
+                    ]
+                    for selector in login_selectors:
+                        try:
+                            if await page.is_visible(selector, timeout=2000):
+                                await page.click(selector, timeout=5000)
+                                logger.info(f"Clicked login element: {selector}")
+                                await asyncio.sleep(2)
+                                break
+                        except:
+                            continue
                 except Exception as e:
                     logger.warning(f"Click login link failed: {e}")
-            
+
             await take_screenshot(page, "02_login_popup")
 
             # Step 3: Wait for popup input fields
@@ -124,7 +156,7 @@ async def run_checkin():
                            document.querySelector('.modal[style*="display: block"]') !== null;
                 }
             """)
-            
+
             if modal_exists:
                 logger.info("Welcome modal detected, closing it via JavaScript...")
                 await page.evaluate("""
@@ -151,57 +183,132 @@ async def run_checkin():
                 logger.info("No welcome modal found.")
 
             # Step 7: Check and perform sign-in
-            logger.info("Checking sign-in status (#sign_title)...")
-            sign_element = await page.query_selector("#sign_title")
+            logger.info("Checking sign-in status...")
 
-            if not sign_element:
-                logger.warning("Sign-in element #sign_title not found on page")
-                await take_screenshot(page, "05_no_sign_element")
-                return 0
+            # 等待页面完全加载，包括 AJAX 内容
+            await asyncio.sleep(3)
 
-            sign_text = await sign_element.inner_text()
-            logger.info(f"Current sign-in text: '{sign_text}'")
+            # 使用精确的选择器定位签到按钮
+            # 真正的可点击元素是 .tt_signpanel .btn.signBtn 这个 div
+            signin_button_selector = ".tt_signpanel .btn.signBtn"
+            signin_button_alt = ".tt_signpanel .btn-primary"
+            signin_text_selector = "#sign_title"
 
-            if "今日已签到" in sign_text:
+            sign_button = None
+
+            # 先尝试精确选择器
+            try:
+                sign_button = await page.wait_for_selector(signin_button_selector, timeout=5000)
+                logger.info(f"Found sign-in button with selector: {signin_button_selector}")
+            except:
+                try:
+                    sign_button = await page.wait_for_selector(signin_button_alt, timeout=5000)
+                    logger.info(f"Found sign-in button with alt selector: {signin_button_alt}")
+                except:
+                    logger.warning("Sign-in button not found with primary selectors")
+
+            # 获取签到文本状态
+            sign_text = ""
+            try:
+                sign_text_el = await page.wait_for_selector(signin_text_selector, timeout=5000)
+                if sign_text_el:
+                    sign_text = await sign_text_el.inner_text()
+                    logger.info(f"Current sign-in text: '{sign_text}'")
+            except:
+                logger.warning("Could not find #sign_title element")
+
+            # 判断是否已签到
+            if "今日已签到" in sign_text or "已签到" in sign_text:
                 logger.info("Already signed in today! No action needed.")
             else:
-                logger.info("Not signed in yet. Attempting to click sign-in element...")
-                try:
+                logger.info("Not signed in yet. Attempting to click sign-in button...")
+
+                if sign_button:
+                    # 方法1: 使用 Playwright 原生点击
+                    try:
+                        await sign_button.click(timeout=5000)
+                        logger.info("Clicked sign-in button via Playwright")
+                        await asyncio.sleep(5)
+                    except Exception as e:
+                        logger.warning(f"Playwright click failed: {e}")
+
+                        # 方法2: 通过 JavaScript 点击，使用精确选择器
+                        clicked = await page.evaluate("""
+                            () => {
+                                // 精确选择器定位签到按钮
+                                var btn = document.querySelector('.tt_signpanel .btn.signBtn') || 
+                                          document.querySelector('.tt_signpanel .btn-primary');
+                                if (!btn) return 'button-not-found';
+
+                                // 触发完整点击事件链
+                                btn.focus();
+                                btn.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true, view: window}));
+                                btn.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, cancelable: true, view: window}));
+                                btn.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window}));
+
+                                // 如果按钮有 onclick 属性，也直接调用
+                                if (btn.onclick) btn.onclick();
+
+                                return 'clicked: ' + btn.tagName + (btn.id ? '#' + btn.id : '') + 
+                                       (btn.className ? '.' + btn.className.split(' ').slice(0,3).join('.') : '');
+                            }
+                        """)
+                        logger.info(f"JavaScript click result: {clicked}")
+                        await asyncio.sleep(5)
+                else:
+                    # 如果连按钮都没找到，尝试通过 #sign_title 向上查找
+                    logger.warning("Sign button not found, trying to locate via #sign_title...")
                     clicked = await page.evaluate("""
                         () => {
-                            var el = document.querySelector('#sign_title');
-                            if (!el) return 'not-found';
-                            
-                            var parent = el.closest('a, button, [onclick], .btn, [data-toggle]');
-                            if (parent) {
-                                parent.click();
-                                return 'clicked-parent: ' + parent.tagName + (parent.id ? '#' + parent.id : '');
+                            var signTitle = document.querySelector('#sign_title');
+                            if (!signTitle) return 'sign-title-not-found';
+
+                            // 向上查找 .btn.signBtn 或 .btn-primary
+                            var btn = signTitle.closest('.btn.signBtn, .btn-primary, .btn');
+                            if (btn) {
+                                btn.click();
+                                btn.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window}));
+                                return 'clicked-parent-btn';
                             }
-                            
-                            el.click();
-                            var evt = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
-                            el.dispatchEvent(evt);
-                            return 'clicked-self';
+
+                            // 再向上查找 .tt_signpanel
+                            var panel = signTitle.closest('.tt_signpanel');
+                            if (panel) {
+                                var panelBtn = panel.querySelector('.btn');
+                                if (panelBtn) {
+                                    panelBtn.click();
+                                    return 'clicked-panel-btn';
+                                }
+                            }
+
+                            return 'no-clickable-parent-found';
                         }
                     """)
-                    logger.info(f"Click result: {clicked}")
-                    
+                    logger.info(f"Fallback click result: {clicked}")
                     await asyncio.sleep(5)
-                    await take_screenshot(page, "05_after_sign_click")
 
-                    sign_element = await page.query_selector("#sign_title")
-                    if sign_element:
-                        sign_text = await sign_element.inner_text()
-                        logger.info(f"Sign-in text after click: '{sign_text}'")
-                        if "今日已签到" in sign_text:
+                await take_screenshot(page, "05_after_sign_click")
+
+                # 再次检查签到状态
+                await asyncio.sleep(3)
+
+                try:
+                    sign_text_el_after = await page.wait_for_selector(signin_text_selector, timeout=5000)
+                    if sign_text_el_after:
+                        sign_text_after = await sign_text_el_after.inner_text()
+                        logger.info(f"Sign-in text after click: '{sign_text_after}'")
+                        if "今日已签到" in sign_text_after or "已签到" in sign_text_after:
                             logger.info("Sign-in completed successfully!")
                         else:
-                            logger.warning("Sign-in text does not indicate success. Please verify manually.")
+                            logger.warning("Sign-in text does not indicate success. Checking API response...")
+                            if signin_api_response.get('last'):
+                                logger.info(f"API Response: {signin_api_response['last']}")
                     else:
                         logger.warning("Sign-in element disappeared after click.")
+                        if signin_api_response.get('last'):
+                            logger.info(f"API Response captured: {signin_api_response['last']}")
                 except Exception as e:
-                    logger.error(f"Failed to click sign-in element: {e}")
-                    await take_screenshot(page, "05_sign_error")
+                    logger.warning(f"Could not verify sign-in status after click: {e}")
 
             logger.info("Check-in workflow completed.")
             return 0
