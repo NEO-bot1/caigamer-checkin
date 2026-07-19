@@ -38,7 +38,7 @@ CHECKIN_SUCCESS_MARKERS = ("今日已签到", "已签到")
 def is_signin_complete(text: str) -> bool:
     """
     Determine whether the page already shows the sign-in success state.
-    判断页面文案是否已经表示“今日已签到 / 已签到”。
+    判断页面文案是否已经表示"今日已签到 / 已签到"。
     """
     return any(marker in text for marker in CHECKIN_SUCCESS_MARKERS)
 
@@ -190,12 +190,16 @@ async def ensure_login_popup(page: Page) -> None:
     """
     logger.info("Checking if login popup is already visible...")
     inputs = await page.query_selector_all("input")
-    has_text_input = any(
-        await inp.get_attribute("type") in ("text", "email") for inp in inputs
-    )
-    has_password_input = any(
-        await inp.get_attribute("type") == "password" for inp in inputs
-    )
+
+    # FIX: 把生成器表达式改为普通 for 循环，避免 await 在生成器中的问题
+    has_text_input = False
+    has_password_input = False
+    for inp in inputs:
+        input_type = await inp.get_attribute("type")
+        if input_type in ("text", "email"):
+            has_text_input = True
+        elif input_type == "password":
+            has_password_input = True
 
     if has_text_input and has_password_input:
         logger.info("Login popup is already visible (auto-shown).")
