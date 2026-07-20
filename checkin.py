@@ -191,7 +191,6 @@ async def ensure_login_popup(page: Page) -> None:
     logger.info("Checking if login popup is already visible...")
     inputs = await page.query_selector_all("input")
 
-    # FIX: 把生成器表达式改为普通 for 循环，避免 await 在生成器中的问题
     has_text_input = False
     has_password_input = False
     for inp in inputs:
@@ -268,7 +267,16 @@ async def login(page: Page, username: str, password: str) -> None:
 
     logger.info("Submitting login form (pressing Enter)...")
     await password_input.press("Enter")
-    await page.wait_for_load_state("networkidle", timeout=10000)
+
+    # FIX: 等待页面导航完成，而不是立即检查弹窗
+    logger.info("Waiting for page navigation after login...")
+    try:
+        await page.wait_for_load_state("networkidle", timeout=15000)
+    except Exception as exc:
+        logger.warning(f"wait_for_load_state networkidle timeout: {exc}")
+
+    # 额外等待确保页面完全稳定
+    await asyncio.sleep(3)
     await take_screenshot(page, "04_after_login")
 
 
@@ -276,44 +284,83 @@ async def close_welcome_modal(page: Page) -> None:
     """
     Close the welcome modal if it appears after login.
     登录完成后，如果页面弹出欢迎弹窗，使用 JS 方式关闭并清理模态层。
+    FIX: 增加 try-except 捕获导航导致的执行上下文销毁错误。
     """
     logger.info("Checking for welcome modal popup...")
-    modal_exists = await page.evaluate(
-        """
-        () => {
-            return document.querySelector('.modal.show') !== null ||
-                   document.querySelector('.modal[style*="display: block"]') !== null;
-        }
-        """
-    )
+
+    # FIX: 先等待页面完全稳定，避免在导航过程中执行 JS
+    try:
+        await page.wait_for_load_state("domcontentloaded", timeout=10000)
+    except Exception as exc:
+        logger.warning(f"wait_for_load_state domcontentloaded timeout: {exc}")
+
+    await asyncio.sleep(2)  # 额外等待让弹窗有时间出现
+
+    modal_exists = False
+    try:
+        modal_exists = await page.evaluate(
+            """
+            () => {
+                return document.querySelector('.modal.show') !== null ||
+                       document.querySelector('.modal[style*="display: block"]') !== null ||
+                       document.querySelector('.modal-backdrop') !== null;
+            }
+            """
+        )
+    except Exception as exc:
+        logger.warning(f"Failed to evaluate modal existence (page may be navigating): {exc}")
+        # FIX: 如果 evaluate 失败，尝试用选择器直接查找
+        try:
+            modal_el = await page.query_selector('.modal.show, .modal[style*="display: block"], .modal-backdrop')
+            modal_exists = modal_el is not None
+        except Exception as exc2:
+            logger.warning(f"Query selector for modal also failed: {exc2}")
+            modal_exists = False
 
     if not modal_exists:
         logger.info("No welcome modal found.")
         return
 
     logger.info("Welcome modal detected, closing it via JavaScript...")
-    await page.evaluate(
-        """
-        () => {
-            var modalEl = document.querySelector('.modal.show');
-            if (modalEl && typeof bootstrap !== 'undefined' && bootstrap.Modal) {
-                var modal = bootstrap.Modal.getInstance(modalEl);
-                if (modal) modal.hide();
+    try:
+        await page.evaluate(
+            """
+            () => {
+                var modalEl = document.querySelector('.modal.show');
+                if (modalEl && typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+                    var modal = bootstrap.Modal.getInstance(modalEl);
+                    if (modal) modal.hide();
+                }
+                document.querySelectorAll('.modal').forEach(m => {
+                    m.classList.remove('show');
+                    m.style.display = 'none';
+                    m.setAttribute('aria-hidden', 'true');
+                });
+                document.querySelectorAll('.modal-backdrop').forEach(b => b.remove());
+                document.body.classList.remove('modal-open');
+                document.body.style.overflow = '';
+                document.body.style.paddingRight = '';
             }
-            document.querySelectorAll('.modal').forEach(m => {
-                m.classList.remove('show');
-                m.style.display = 'none';
-                m.setAttribute('aria-hidden', 'true');
-            });
-            document.querySelectorAll('.modal-backdrop').forEach(b => b.remove());
-            document.body.classList.remove('modal-open');
-            document.body.style.overflow = '';
-            document.body.style.paddingRight = '';
-        }
-        """
-    )
-    await page.wait_for_load_state("networkidle", timeout=10000)
-    await take_screenshot(page, "04b_modal_closed")
+            """
+        )
+        await asyncio.sleep(1)
+        await take_screenshot(page, "04b_modal_closed")
+    except Exception as exc:
+        logger.warning(f"Failed to close modal via JavaScript: {exc}")
+        # FIX: 如果 JS 关闭失败，尝试用键盘 ESC 关闭
+        try:
+            await page.keyboard.press("Escape")
+            logger.info("Sent Escape key to close modal")
+            await asyncio.sleep(1)
+        except Exception as esc_exc:
+            logger.warning(f"Escape key also failed: {esc_exc}")
+
+    # FIX: 无论弹窗是否成功关闭，都等待页面稳定
+    try:
+        await page.wait_for_load_state("networkidle", timeout=10000)
+    except Exception as exc:
+        logger.warning(f"wait_for_load_state after modal close timeout: {exc}")
+    await asyncio.sleep(2)
 
 
 async def get_signin_text(page: Page) -> str:
@@ -336,7 +383,30 @@ async def click_signin_button(page: Page) -> str:
     """
     Click the sign-in button using Playwright first, then fallback to JavaScript.
     优先用 Playwright 原生点击；如果不可用，则退回到 JS 触发点击。
+    FIX: 增加对遮罩层的处理，确保按钮可点击。
     """
+    # FIX: 先移除可能的遮罩层和 modal-open 状态
+    try:
+        await page.evaluate(
+            """
+            () => {
+                document.querySelectorAll('.modal-backdrop').forEach(b => b.remove());
+                document.querySelectorAll('.modal').forEach(m => {
+                    m.classList.remove('show');
+                    m.style.display = 'none';
+                });
+                document.body.classList.remove('modal-open');
+                document.body.style.overflow = '';
+                document.body.style.paddingRight = '';
+            }
+            """
+        )
+        logger.info("Cleaned up potential overlay/modal-backdrop")
+    except Exception as exc:
+        logger.debug(f"Cleanup overlay failed (non-critical): {exc}")
+
+    await asyncio.sleep(1)
+
     sign_button = None
     for selector in SIGNIN_BUTTON_SELECTORS:
         try:
@@ -348,6 +418,10 @@ async def click_signin_button(page: Page) -> str:
 
     if sign_button:
         try:
+            # FIX: 先滚动到按钮位置确保可见
+            await sign_button.scroll_into_view_if_needed()
+            await asyncio.sleep(0.5)
+
             await retry_async(
                 lambda: sign_button.click(timeout=5000),
                 retries=1,
@@ -368,6 +442,7 @@ async def click_signin_button(page: Page) -> str:
             if (!btn) return 'button-not-found';
 
             btn.focus();
+            btn.scrollIntoView({behavior: 'instant', block: 'center'});
             btn.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true, view: window}));
             btn.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, cancelable: true, view: window}));
             btn.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window}));
@@ -431,6 +506,11 @@ async def run_checkin() -> int:
             await take_screenshot(page, "02_login_popup")
 
             await login(page, username, password)
+
+            # FIX: 登录后先等待页面完全稳定，再处理弹窗
+            logger.info("Login submitted, waiting for page to stabilize...")
+            await asyncio.sleep(3)
+
             await close_welcome_modal(page)
 
             logger.info("Checking sign-in status...")
