@@ -3,7 +3,7 @@ name: Caigamer Daily Check-in
 
 # Trigger conditions / 触发条件
 on:
-  # Run daily at 01:00 UTC / 每天 UTC 01:00 自动运行
+  # Run daily at 09:00 Beijing Time (01:00 UTC) / 每天北京时间 09:00 自动运行（UTC 01:00）
   schedule:
     - cron: '0 1 * * *'
   # Allow manual execution from the Actions tab / 允许手动从 Actions 页面触发
@@ -31,7 +31,7 @@ jobs:
         include:
           - account: account-1
             username_secret: CAIGAMER_USERNAME
-            password_secret: CAIGAMER_PASSWORD
+            password_secret: CAIGAMAMER_PASSWORD
           - account: account-2
             username_secret: CAIGAMER_USERNAME_2
             password_secret: CAIGAMER_PASSWORD_2
