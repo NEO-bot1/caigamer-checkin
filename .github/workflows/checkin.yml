@@ -29,7 +29,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-              - account: account-1
+          - account: account-1
             username_secret: CAIGAMER_USERNAME
             password_secret: CAIGAMER_PASSWORD
           - account: account-2
@@ -59,13 +59,13 @@ jobs:
           playwright install chromium
 
       - name: Debug resolved secret keys
-        run: echo "matrix.username_secret=${{ matrix.username_secret }} matrix.password_secret=${{ matrix.password_secret }}"
+        run: echo "matrix.account=${{ matrix.account }}"
 
       # Run the check-in script with the current account's secrets / 使用当前账号的 Secret 运行签到脚本
       - name: Run check-in for ${{ matrix.account }}
         env:
-          CAIGAMER_USERNAME: ${{ secrets[matrix.username_secret] || secrets.CAIGAMER_USERNAME }}
-          CAIGAMER_PASSWORD: ${{ secrets[matrix.password_secret] || secrets.CAIGAMER_PASSWORD }}
+          CAIGAMER_USERNAME: ${{ matrix.username_secret }}
+          CAIGAMER_PASSWORD: ${{ matrix.password_secret }}
         run: python checkin.py
 
       # Always upload screenshots for debugging / 无论成功失败都上传截图用于排查

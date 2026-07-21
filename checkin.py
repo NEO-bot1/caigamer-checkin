@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
-from playwright.async_api import Page, async_playwright
+from playwright.async_api import Page, async_playwright  # type: ignore[import-not-found]
 
 # Base target URL / 目标站点地址
 BASE_URL = "https://caigamer.cn/"
