@@ -34,6 +34,11 @@ SIGNIN_TEXT_SELECTOR = "#sign_title"
 # Markers that mean the user already checked in / 表示已签到的页面文案标记
 CHECKIN_SUCCESS_MARKERS = ("今日已签到", "已签到")
 
+# Simplified explicit XPaths provided by user (prefer these to heuristics)
+USERNAME_XPATH = "/html/body/div[6]/div/div[2]/div[2]/form/div[1]/input"
+PASSWORD_XPATH = "/html/body/div[6]/div/div[2]/div[2]/form/div[2]/input"
+SIGNIN_BUTTON_XPATH = "/html/body/div[1]/div[1]/div[3]/div/main/section[2]/aside/div[2]/div[1]/div[2]/div"
+
 
 def is_signin_complete(text: str) -> bool:
     """
@@ -188,39 +193,32 @@ async def ensure_login_popup(page: Page) -> None:
     Open the login popup if it is not already visible.
     先判断登录框是否已经自动弹出；如果没有，再尝试点击登录入口。
     """
-    logger.info("Checking if login popup is already visible...")
-    inputs = await page.query_selector_all("input")
-
-    has_text_input = False
-    has_password_input = False
-    for inp in inputs:
-        input_type = await inp.get_attribute("type")
-        if input_type in ("text", "email"):
-            has_text_input = True
-        elif input_type == "password":
-            has_password_input = True
-
-    if has_text_input and has_password_input:
-        logger.info("Login popup is already visible (auto-shown).")
+    logger.info("Checking for login inputs using provided XPaths...")
+    try:
+        # Prefer explicit XPath; short timeout to avoid long stalls
+        await page.wait_for_selector(f"xpath={USERNAME_XPATH}", timeout=3000)
+        await page.wait_for_selector(f"xpath={PASSWORD_XPATH}", timeout=3000)
+        logger.info("Login popup inputs found via XPath.")
         return
+    except Exception:
+        logger.info("XPath inputs not visible yet, attempting known login links...")
 
-    logger.info("Login popup not auto-shown, clicking login link...")
-    clicked = False
+    # Fallback: try known login entry selectors
     for selector in LOGIN_SELECTORS:
         try:
             if await page.is_visible(selector, timeout=2000):
                 await page.click(selector, timeout=5000)
                 logger.info(f"Clicked login element: {selector}")
-                clicked = True
                 break
         except Exception as exc:
             logger.debug(f"Selector {selector} skipped: {exc}")
 
-    if not clicked:
-        logger.warning("No login button matched any known selector.")
+    # Wait for username input to appear
+    try:
+        await page.wait_for_selector(f"xpath={USERNAME_XPATH}", timeout=10000)
+    except Exception as exc:
+        logger.warning(f"Username input not found after fallback: {exc}")
         await take_screenshot(page, "02_login_popup_unmatched")
-
-    await page.wait_for_selector("input[type='text'], input[type='email']", timeout=10000)
 
 
 async def find_login_inputs(page: Page) -> Tuple[Optional[Any], Optional[Any]]:
@@ -228,17 +226,17 @@ async def find_login_inputs(page: Page) -> Tuple[Optional[Any], Optional[Any]]:
     Return the username/email input and password input.
     找到页面中的账号输入框与密码输入框；这里优先识别通用输入类型。
     """
-    inputs = await page.query_selector_all("input")
+    # Use explicit XPaths for robustness
     username_input = None
     password_input = None
-
-    for inp in inputs:
-        input_type = await inp.get_attribute("type")
-        if input_type in ("text", "email"):
-            username_input = inp
-        elif input_type == "password":
-            password_input = inp
-
+    try:
+        username_input = await page.wait_for_selector(f"xpath={USERNAME_XPATH}", timeout=5000)
+    except Exception:
+        username_input = None
+    try:
+        password_input = await page.wait_for_selector(f"xpath={PASSWORD_XPATH}", timeout=5000)
+    except Exception:
+        password_input = None
     return username_input, password_input
 
 
@@ -259,14 +257,22 @@ async def login(page: Page, username: str, password: str) -> None:
         await take_screenshot(page, "03_error_inputs")
         raise RuntimeError("login inputs were not found")
 
-    logger.info("Filling username...")
+    logger.info("Filling username via XPath...")
     await username_input.fill(username)
-    logger.info("Filling password...")
+    logger.info("Filling password via XPath...")
     await password_input.fill(password)
     await take_screenshot(page, "03_filled_form")
 
     logger.info("Submitting login form (pressing Enter)...")
-    await password_input.press("Enter")
+    try:
+        await password_input.press("Enter")
+    except Exception:
+        # Fallback: try to submit via form submit JS
+        try:
+            await page.evaluate("() => { var f = document.querySelector('form'); if(f) f.submit(); }")
+            logger.info("Submitted login form via JS submit fallback")
+        except Exception as exc:
+            logger.warning(f"Failed to submit form via fallback: {exc}")
 
     # FIX: 等待页面导航完成，而不是立即检查弹窗
     logger.info("Waiting for page navigation after login...")
@@ -407,55 +413,40 @@ async def click_signin_button(page: Page) -> str:
 
     await asyncio.sleep(1)
 
-    sign_button = None
+    # Prefer explicit XPath for sign-in button
+    try:
+        sign_button = await page.wait_for_selector(f"xpath={SIGNIN_BUTTON_XPATH}", timeout=5000)
+        await sign_button.scroll_into_view_if_needed()
+        await asyncio.sleep(0.3)
+        await retry_async(lambda: sign_button.click(timeout=5000), retries=1, delay_seconds=1, description="click sign-in button")
+        logger.info("Clicked sign-in button via XPath Playwright click")
+        await page.wait_for_load_state("networkidle", timeout=10000)
+        return "clicked-via-xpath"
+    except Exception as exc:
+        logger.warning(f"XPath sign-in click failed or not found: {exc}")
+
+    # Fallback to previous selectors / JS click
     for selector in SIGNIN_BUTTON_SELECTORS:
         try:
-            sign_button = await page.wait_for_selector(selector, timeout=5000)
-            logger.info(f"Found sign-in button with selector: {selector}")
-            break
+            btn = await page.query_selector(selector)
+            if btn:
+                await btn.scroll_into_view_if_needed()
+                await btn.click()
+                logger.info(f"Clicked sign-in button with fallback selector: {selector}")
+                await page.wait_for_load_state("networkidle", timeout=10000)
+                return "clicked-via-fallback"
         except Exception as exc:
-            logger.debug(f"Selector {selector} not found: {exc}")
+            logger.debug(f"Fallback selector click failed: {exc}")
 
-    if sign_button:
-        try:
-            # FIX: 先滚动到按钮位置确保可见
-            await sign_button.scroll_into_view_if_needed()
-            await asyncio.sleep(0.5)
-
-            await retry_async(
-                lambda: sign_button.click(timeout=5000),
-                retries=1,
-                delay_seconds=1,
-                description="click sign-in button",
-            )
-            logger.info("Clicked sign-in button via Playwright")
-            await page.wait_for_load_state("networkidle", timeout=10000)
-            return "clicked-via-playwright"
-        except Exception as exc:
-            logger.warning(f"Playwright click failed: {exc}")
-
-    clicked = await page.evaluate(
-        """
-        () => {
-            var btn = document.querySelector('.tt_signpanel .btn.signBtn') ||
-                      document.querySelector('.tt_signpanel .btn-primary');
-            if (!btn) return 'button-not-found';
-
-            btn.focus();
-            btn.scrollIntoView({behavior: 'instant', block: 'center'});
-            btn.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true, view: window}));
-            btn.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, cancelable: true, view: window}));
-            btn.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window}));
-
-            if (btn.onclick) btn.onclick();
-            return 'clicked: ' + btn.tagName + (btn.id ? '#' + btn.id : '') +
-                   (btn.className ? '.' + btn.className.split(' ').slice(0, 3).join('.') : '');
-        }
-        """
-    )
-    logger.info(f"JavaScript click result: {clicked}")
-    await page.wait_for_load_state("networkidle", timeout=10000)
-    return clicked
+    # Last resort: JS click by XPath
+    try:
+        clicked = await page.evaluate(f"() => {{ var el = document.evaluate('{SIGNIN_BUTTON_XPATH}', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue; if(!el) return 'button-not-found'; el.click(); return 'clicked-via-js-xpath'; }}")
+        logger.info(f"JavaScript XPath click result: {clicked}")
+        await page.wait_for_load_state("networkidle", timeout=10000)
+        return clicked
+    except Exception as exc:
+        logger.warning(f"All click attempts failed: {exc}")
+        return "click-failed"
 
 
 async def verify_signin_result(page: Page, signin_api_response: Dict[str, Any]) -> bool:
@@ -487,6 +478,12 @@ async def run_checkin() -> int:
     主流程：读取环境变量 -> 打开主页 -> 登录 -> 处理弹窗 -> 判断签到状态 -> 点击签到 -> 验证结果。
     """
     username, password = get_credentials()
+    # Log presence of credentials without exposing values
+    logger.info(
+        "Credentials presence: username_present=%s, password_present=%s",
+        bool(username),
+        bool(password),
+    )
     missing = []
     if not username:
         missing.append("CAIGAMER_USERNAME")
