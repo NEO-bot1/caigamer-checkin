@@ -31,8 +31,25 @@ jobs:
 
       - name: Run check-in script
         env:
+          # Single account convenience (kept for backward compatibility)
           CAIGAMER_USERNAME: ${{ secrets.CAIGAMER_USERNAME }}
           CAIGAMER_PASSWORD: ${{ secrets.CAIGAMER_PASSWORD }}
+          # Optional numbered accounts: CAIGAMER_USERNAME_2, CAIGAMER_PASSWORD_2 ... (set as secrets)
+          # Or provide JSON array via CAIGAMER_ACCOUNTS secret, e.g:
+          # [{"username":"u1","password":"p1"},{"username":"u2","password":"p2"}]
+          CAIGAMER_ACCOUNTS: ${{ secrets.CAIGAMER_ACCOUNTS }}
+          # Numbered account secrets (support up to 3 accounts total)
+          CAIGAMER_USERNAME_2: ${{ secrets.CAIGAMER_USERNAME_2 }}
+          CAIGAMER_PASSWORD_2: ${{ secrets.CAIGAMER_PASSWORD_2 }}
+          CAIGAMER_USERNAME_3: ${{ secrets.CAIGAMER_USERNAME_3 }}
+          CAIGAMER_PASSWORD_3: ${{ secrets.CAIGAMER_PASSWORD_3 }}
+          # Email/SMS notification settings (optional). Configure these secrets to enable error emails.
+          EMAIL_SMTP_SERVER: ${{ secrets.EMAIL_SMTP_SERVER }}
+          EMAIL_SMTP_PORT: ${{ secrets.EMAIL_SMTP_PORT }}
+          EMAIL_USERNAME: ${{ secrets.EMAIL_USERNAME }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
         run: python checkin.py
 
       - name: Upload screenshots artifact
