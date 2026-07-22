@@ -61,6 +61,12 @@ jobs:
       - name: Debug resolved secret keys
         run: echo "matrix.account=${{ matrix.account }}"
 
+      # Inject secrets into the runner environment via GITHUB_ENV (resolves dynamic secret names)
+      - name: Set credentials into environment
+        run: |
+          echo "CAIGAMER_USERNAME=${{ secrets[matrix.username_secret] }}" >> $GITHUB_ENV
+          echo "CAIGAMER_PASSWORD=${{ secrets[matrix.password_secret] }}" >> $GITHUB_ENV
+
       # Verify secrets are present (do not print their values)
       - name: Verify secrets presence
         run: |
@@ -69,9 +75,6 @@ jobs:
 
       # Run the check-in script with the current account's secrets / 使用当前账号的 Secret 运行签到脚本
       - name: Run check-in for ${{ matrix.account }}
-        env:
-          CAIGAMER_USERNAME: ${{ secrets[matrix.username_secret] }}
-          CAIGAMER_PASSWORD: ${{ secrets[matrix.password_secret] }}
         run: python checkin.py
 
       # Always upload screenshots for debugging / 无论成功失败都上传截图用于排查
