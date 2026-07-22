@@ -1,88 +1,44 @@
-# Workflow name / 工作流名称
 name: Caigamer Daily Check-in
 
-# Trigger conditions / 触发条件
 on:
-  # Run daily at 09:00 Beijing Time (01:00 UTC) / 每天北京时间 09:00 自动运行（UTC 01:00）
   schedule:
+    # UTC 01:00 = Beijing Time 09:00
     - cron: '0 1 * * *'
-  # Allow manual execution from the Actions tab / 允许手动从 Actions 页面触发
   workflow_dispatch:
 
-# Minimal permissions required for checkout and artifact upload / 最小权限设置
-permissions:
-  contents: read
-
-# Prevent duplicate runs from overlapping / 避免重复任务重叠执行
-concurrency:
-  group: caigamer-checkin
-  cancel-in-progress: true
-
 jobs:
-  # Single matrix job to support multiple accounts / 使用矩阵任务统一处理多个账号
   checkin:
-    name: Check-in (${{ matrix.account }})
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    strategy:
-      # Continue all account jobs even if one fails / 一个账号失败不影响其他账号
-      fail-fast: false
-      matrix:
-        include:
-          - account: account-1
-            username_secret: CAIGAMER_USERNAME
-            password_secret: CAIGAMER_PASSWORD
-          - account: account-2
-            username_secret: CAIGAMER_USERNAME_2
-            password_secret: CAIGAMER_PASSWORD_2
 
     steps:
-      # Check out the repository / 拉取仓库代码
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      # Set up Python runtime / 配置 Python 运行环境
-      - uses: actions/setup-python@v5
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      # Install fonts required by Chromium for Chinese rendering / 安装中文字体，避免页面乱码
-      - name: Install system dependencies
+      - name: Install Chinese fonts
         run: |
           sudo apt-get update
           sudo apt-get install -y fonts-wqy-zenhei fonts-wqy-microhei fonts-noto-cjk fonts-noto-color-emoji
 
-      # Install Python dependencies and Playwright browser / 安装 Python 依赖与 Playwright 浏览器
-      - name: Install Python dependencies
+      - name: Install Python dependencies & Playwright Chromium
         run: |
-          python -m pip install --upgrade pip
           pip install -r requirements.txt
           playwright install chromium
 
-      - name: Debug resolved secret keys
-        run: echo "matrix.account=${{ matrix.account }}"
-
-      # Inject secrets into the runner environment via GITHUB_ENV (resolves dynamic secret names)
-      - name: Set credentials into environment
-        run: |
-          echo "CAIGAMER_USERNAME=${{ secrets[matrix.username_secret] }}" >> $GITHUB_ENV
-          echo "CAIGAMER_PASSWORD=${{ secrets[matrix.password_secret] }}" >> $GITHUB_ENV
-
-      # Verify secrets are present (do not print their values)
-      - name: Verify secrets presence
-        run: |
-          echo "CAIGAMER_USERNAME_PRESENT=$( [ -n \"$CAIGAMER_USERNAME\" ] && echo true || echo false )"
-          echo "CAIGAMER_PASSWORD_PRESENT=$( [ -n \"$CAIGAMER_PASSWORD\" ] && echo true || echo false )"
-
-      # Run the check-in script with the current account's secrets / 使用当前账号的 Secret 运行签到脚本
-      - name: Run check-in for ${{ matrix.account }}
+      - name: Run check-in script
+        env:
+          CAIGAMER_USERNAME: ${{ secrets.CAIGAMER_USERNAME }}
+          CAIGAMER_PASSWORD: ${{ secrets.CAIGAMER_PASSWORD }}
         run: python checkin.py
 
-      # Always upload screenshots for debugging / 无论成功失败都上传截图用于排查
-      - name: Upload screenshots
+      - name: Upload screenshots artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: screenshots-${{ matrix.account }}
+          name: screenshots
           path: page_*.png
-          if-no-files-found: ignore
           retention-days: 7
