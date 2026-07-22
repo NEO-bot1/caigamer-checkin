@@ -61,6 +61,12 @@ jobs:
       - name: Debug resolved secret keys
         run: echo "matrix.account=${{ matrix.account }}"
 
+      # Verify secrets are present (do not print their values)
+      - name: Verify secrets presence
+        run: |
+          echo "CAIGAMER_USERNAME_PRESENT=$( [ -n \"$CAIGAMER_USERNAME\" ] && echo true || echo false )"
+          echo "CAIGAMER_PASSWORD_PRESENT=$( [ -n \"$CAIGAMER_PASSWORD\" ] && echo true || echo false )"
+
       # Run the check-in script with the current account's secrets / 使用当前账号的 Secret 运行签到脚本
       - name: Run check-in for ${{ matrix.account }}
         env:
