@@ -184,7 +184,7 @@ async def run_checkin():
                     logger.info(f"[{username}] Navigating to https://caigamer.cn/ ...")
                     await page.goto("https://caigamer.cn/", wait_until="domcontentloaded", timeout=60000)
                     await asyncio.sleep(2)
-                    await take_screenshot(page, "01_homepage", account_name=username)
+                    await take_screenshot(page, "homepage", account_name=username)
 
                     # Handle login popup
                     logger.info(f"[{username}] Checking if login popup is already visible...")
@@ -206,8 +206,6 @@ async def run_checkin():
                         except Exception as e:
                             logger.warning(f"[{username}] Click login link failed: {e}")
 
-                    await take_screenshot(page, "02_login_popup", account_name=username)
-
                     # Wait for inputs
                     await page.wait_for_selector("input[type='text'], input[type='email']", timeout=10000)
                     inputs = await page.query_selector_all("input")
@@ -223,7 +221,7 @@ async def run_checkin():
                     if not username_input or not password_input:
                         msg = "Failed to locate username or password input field"
                         logger.error(f"[{username}] {msg}")
-                        await take_screenshot(page, "03_error_inputs", account_name=username)
+                        await take_screenshot(page, "error_inputs", account_name=username)
                         acct_result.update({"error": msg})
                         results.append(acct_result)
                         await context.close()
@@ -231,11 +229,9 @@ async def run_checkin():
 
                     await username_input.fill(username)
                     await password_input.fill(password)
-                    await take_screenshot(page, "03_filled_form", account_name=username)
-
                     await password_input.press("Enter")
                     await asyncio.sleep(4)
-                    await take_screenshot(page, "04_after_login", account_name=username)
+                    await take_screenshot(page, "after_login", account_name=username)
 
                     # Close welcome modal if present
                     modal_exists = await page.evaluate("""
@@ -247,11 +243,6 @@ async def run_checkin():
                     if modal_exists:
                         await page.evaluate("""
                             () => {
-                                var modalEl = document.querySelector('.modal.show');
-                                if (modalEl && typeof bootstrap !== 'undefined' && bootstrap.Modal) {
-                                    var modal = bootstrap.Modal.getInstance(modalEl);
-                                    if (modal) modal.hide();
-                                }
                                 document.querySelectorAll('.modal').forEach(m => {
                                     m.classList.remove('show');
                                     m.style.display = 'none';
@@ -264,137 +255,63 @@ async def run_checkin():
                             }
                         """)
                         await asyncio.sleep(1)
-                        await take_screenshot(page, "04b_modal_closed", account_name=username)
 
-                    # Sign-in
-                    logger.info(f"[{username}] Checking sign-in status (#sign_title)...")
-                    sign_element = await page.query_selector("#sign_title")
-                    if not sign_element:
-                        msg = "Sign-in element #sign_title not found"
-                        logger.warning(f"[{username}] {msg}")
-                        await take_screenshot(page, "05_no_sign_element", account_name=username)
-                        acct_result.update({"error": msg})
-                        results.append(acct_result)
-                        await context.close()
-                        continue
+                    # --- Sign-in ---
+                    logger.info(f"[{username}] Checking sign-in status...")
 
-                    sign_text = await sign_element.inner_text()
+                    # Wait for sign panel to render
+                    await page.wait_for_selector('.tt_signpanel', timeout=15000)
+
+                    # Check sign status via the first #sign_title element
+                    sign_text = await page.locator('#sign_title').first.inner_text()
                     logger.info(f"[{username}] Current sign-in text: '{sign_text}'")
 
                     if "今日已签到" in sign_text:
                         logger.info(f"[{username}] Already signed in today.")
                         acct_result.update({"success": True})
                     else:
-                        # Log outerHTML for debugging before clicking
-                        try:
-                            el = await page.query_selector("#sign_title")
-                            if el:
-                                outer = await el.evaluate("e => e.outerHTML")
-                                logger.info(f"[{username}] sign_title outerHTML before click: {outer}")
-                        except Exception:
-                            logger.exception("Failed to read sign_title outerHTML before click")
-
+                        # Click the real sign button inside .tt_signpanel (not the cloned one)
                         success_click = False
-                        click_result = None
-                        # Helper JS to check success: either sign_title contains '今日已签到' or toast contains '签到'
-                        check_js = """
-                            () => {
-                                const s = document.querySelector('#sign_title');
-                                if (s && s.innerText && s.innerText.includes('今日已签到')) return true;
-                                const toast = document.querySelector('.toast, .alert');
-                                if (toast && toast.innerText && /签到/.test(toast.innerText)) return true;
-                                return false;
-                            }
-                        """
+                        sign_btn = page.locator('.tt_signpanel .signBtn')
 
-                        # Try clicking up to 3 attempts, using multiple click methods per attempt
-                        for attempt in range(1, 4):
-                            logger.info(f"[{username}] Click attempt sequence {attempt} starting")
-
-                            # Method A: evaluate click on closest clickable parent
+                        for attempt in range(1, 3):
+                            logger.info(f"[{username}] Click attempt {attempt}...")
                             try:
-                                click_result = await page.evaluate("""
-                                    () => {
-                                        var el = document.querySelector('#sign_title');
-                                        if (!el) return 'not-found';
-                                        var parent = el.closest('a, button, [onclick], .btn, [data-toggle]');
-                                        if (parent) { parent.click(); return 'clicked-parent'; }
-                                        el.click();
-                                        var evt = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
-                                        el.dispatchEvent(evt);
-                                        return 'clicked-self';
-                                    }
-                                """)
-                                logger.info(f"[{username}] Method A result: {click_result}")
-                            except Exception:
-                                logger.exception(f"[{username}] Method A evaluate click failed")
+                                await sign_btn.scroll_into_view_if_needed()
+                                await sign_btn.click(timeout=5000, force=True)
+                                logger.info(f"[{username}] Playwright click succeeded")
+                            except Exception as e:
+                                logger.warning(f"[{username}] Playwright click failed: {e}")
+                                # Fallback: evaluate dispatchEvent on the real sign button
+                                try:
+                                    await page.evaluate("""
+                                        () => {
+                                            var btn = document.querySelector('.tt_signpanel .signBtn');
+                                            if (btn) {
+                                                var evt = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
+                                                btn.dispatchEvent(evt);
+                                            }
+                                        }
+                                    """)
+                                    logger.info(f"[{username}] JS dispatchEvent fallback used")
+                                except Exception as e2:
+                                    logger.warning(f"[{username}] JS fallback also failed: {e2}")
 
-                            # Wait briefly and check
-                            try:
-                                await page.wait_for_function(check_js, timeout=6000)
-                                success_click = True
-                                logger.info(f"[{username}] Sign-in detected after Method A on sequence {attempt}")
-                                break
-                            except Exception:
-                                logger.info(f"[{username}] No sign change after Method A on sequence {attempt}")
-
-                            # Method B: locator click on visible .signBtn
-                            try:
-                                btn = page.locator('div.signBtn, .signBtn')
-                                await btn.scroll_into_view_if_needed()
-                                await btn.click(timeout=5000, force=True)
-                                logger.info(f"[{username}] Method B: locator.click invoked")
-                            except Exception:
-                                logger.exception(f"[{username}] Method B locator.click failed")
-
-                            try:
-                                await page.wait_for_function(check_js, timeout=6000)
-                                success_click = True
-                                logger.info(f"[{username}] Sign-in detected after Method B on sequence {attempt}")
-                                break
-                            except Exception:
-                                logger.info(f"[{username}] No sign change after Method B on sequence {attempt}")
-
-                            # Method C: direct click on #sign_title
-                            try:
-                                await page.locator('#sign_title').click(timeout=3000, force=True)
-                                logger.info(f"[{username}] Method C: #sign_title click invoked")
-                            except Exception:
-                                logger.exception(f"[{username}] Method C direct click failed")
-
-                            try:
-                                await page.wait_for_function(check_js, timeout=6000)
-                                success_click = True
-                                logger.info(f"[{username}] Sign-in detected after Method C on sequence {attempt}")
-                                break
-                            except Exception:
-                                logger.info(f"[{username}] No sign change after Method C on sequence {attempt}")
-
-                            # small backoff before next sequence
                             await asyncio.sleep(2)
 
-                        await take_screenshot(page, "05_after_sign_click", account_name=username)
-
-                        # Re-evaluate sign element and text
-                        sign_element = await page.query_selector("#sign_title")
-                        if sign_element:
-                            sign_text = await sign_element.inner_text()
-                            logger.info(f"[{username}] Sign-in text after attempts: '{sign_text}'")
-                            if "今日已签到" in sign_text:
+                            # Check result
+                            new_text = await page.locator('#sign_title').first.inner_text()
+                            if "今日已签到" in new_text:
+                                success_click = True
                                 logger.info(f"[{username}] Sign-in completed successfully")
-                                acct_result.update({"success": True})
-                            else:
-                                # Capture outerHTML to help debugging
-                                try:
-                                    outer_after = await sign_element.evaluate("e => e.outerHTML")
-                                    logger.info(f"[{username}] sign_title outerHTML after attempts: {outer_after}")
-                                except Exception:
-                                    logger.exception("Failed to read sign_title outerHTML after attempts")
-                                msg = "Sign-in did not indicate success after click"
-                                logger.warning(f"[{username}] {msg}")
-                                acct_result.update({"error": msg})
+                                break
+
+                        await take_screenshot(page, "sign_result", account_name=username)
+
+                        if success_click:
+                            acct_result.update({"success": True})
                         else:
-                            msg = "Sign-in element disappeared after click"
+                            msg = "Sign-in did not indicate success after click attempts"
                             logger.warning(f"[{username}] {msg}")
                             acct_result.update({"error": msg})
 

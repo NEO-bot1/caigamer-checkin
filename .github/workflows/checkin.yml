@@ -2,9 +2,18 @@ name: Caigamer Daily Check-in
 
 on:
   schedule:
-    # UTC 01:00 = Beijing Time 09:00
-    - cron: '0 1 * * *'
+    # UTC 00:00 = Beijing Time 08:00
+    - cron: '0 0 * * *'
   workflow_dispatch:
+    inputs:
+      only_username:
+        description: 'Rerun only this username (leave empty to run all accounts)'
+        required: false
+        type: string
+      only_index:
+        description: 'Rerun only account at this index (1-based, e.g. 2 for the second account)'
+        required: false
+        type: number
 
 jobs:
   checkin:
@@ -50,6 +59,9 @@ jobs:
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          # Targeted rerun support (set via workflow_dispatch)
+          CAIGAMER_ONLY_USERNAME: ${{ inputs.only_username || '' }}
+          CAIGAMER_ONLY_INDEX: ${{ inputs.only_index || '' }}
         run: python checkin.py
 
       - name: Upload screenshots artifact
