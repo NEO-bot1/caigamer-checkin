@@ -275,32 +275,82 @@ async def run_checkin():
 
                         success_click = False
                         click_result = None
-                        # Try clicking up to 3 times and wait for the text to change
+                        # Helper JS to check success: either sign_title contains '今日已签到' or toast contains '签到'
+                        check_js = """
+                            () => {
+                                const s = document.querySelector('#sign_title');
+                                if (s && s.innerText && s.innerText.includes('今日已签到')) return true;
+                                const toast = document.querySelector('.toast, .alert');
+                                if (toast && toast.innerText && /签到/.test(toast.innerText)) return true;
+                                return false;
+                            }
+                        """
+
+                        # Try clicking up to 3 attempts, using multiple click methods per attempt
                         for attempt in range(1, 4):
-                            click_result = await page.evaluate("""
-                                () => {
-                                    var el = document.querySelector('#sign_title');
-                                    if (!el) return 'not-found';
-                                    var parent = el.closest('a, button, [onclick], .btn, [data-toggle]');
-                                    if (parent) { parent.click(); return 'clicked-parent'; }
-                                    el.click();
-                                    var evt = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
-                                    el.dispatchEvent(evt);
-                                    return 'clicked-self';
-                                }
-                            """)
-                            logger.info(f"[{username}] Click attempt {attempt}: {click_result}")
+                            logger.info(f"[{username}] Click attempt sequence {attempt} starting")
+
+                            # Method A: evaluate click on closest clickable parent
                             try:
-                                await page.wait_for_function(
-                                    "() => document.querySelector('#sign_title') && document.querySelector('#sign_title').innerText.includes('今日已签到')",
-                                    timeout=8000
-                                )
+                                click_result = await page.evaluate("""
+                                    () => {
+                                        var el = document.querySelector('#sign_title');
+                                        if (!el) return 'not-found';
+                                        var parent = el.closest('a, button, [onclick], .btn, [data-toggle]');
+                                        if (parent) { parent.click(); return 'clicked-parent'; }
+                                        el.click();
+                                        var evt = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
+                                        el.dispatchEvent(evt);
+                                        return 'clicked-self';
+                                    }
+                                """)
+                                logger.info(f"[{username}] Method A result: {click_result}")
+                            except Exception:
+                                logger.exception(f"[{username}] Method A evaluate click failed")
+
+                            # Wait briefly and check
+                            try:
+                                await page.wait_for_function(check_js, timeout=6000)
                                 success_click = True
-                                logger.info(f"[{username}] Sign-in text changed after click attempt {attempt}")
+                                logger.info(f"[{username}] Sign-in detected after Method A on sequence {attempt}")
                                 break
                             except Exception:
-                                logger.info(f"[{username}] wait_for_function timeout after attempt {attempt}")
-                                await asyncio.sleep(2)
+                                logger.info(f"[{username}] No sign change after Method A on sequence {attempt}")
+
+                            # Method B: locator click on visible .signBtn
+                            try:
+                                btn = page.locator('div.signBtn, .signBtn')
+                                await btn.scroll_into_view_if_needed()
+                                await btn.click(timeout=5000, force=True)
+                                logger.info(f"[{username}] Method B: locator.click invoked")
+                            except Exception:
+                                logger.exception(f"[{username}] Method B locator.click failed")
+
+                            try:
+                                await page.wait_for_function(check_js, timeout=6000)
+                                success_click = True
+                                logger.info(f"[{username}] Sign-in detected after Method B on sequence {attempt}")
+                                break
+                            except Exception:
+                                logger.info(f"[{username}] No sign change after Method B on sequence {attempt}")
+
+                            # Method C: direct click on #sign_title
+                            try:
+                                await page.locator('#sign_title').click(timeout=3000, force=True)
+                                logger.info(f"[{username}] Method C: #sign_title click invoked")
+                            except Exception:
+                                logger.exception(f"[{username}] Method C direct click failed")
+
+                            try:
+                                await page.wait_for_function(check_js, timeout=6000)
+                                success_click = True
+                                logger.info(f"[{username}] Sign-in detected after Method C on sequence {attempt}")
+                                break
+                            except Exception:
+                                logger.info(f"[{username}] No sign change after Method C on sequence {attempt}")
+
+                            # small backoff before next sequence
+                            await asyncio.sleep(2)
 
                         await take_screenshot(page, "05_after_sign_click", account_name=username)
 
@@ -351,6 +401,14 @@ async def run_checkin():
 
             return_code = 0
             # If there are errors, attempt to send summary email
+            # Write per-account results to a JSON file for separate presentation
+            try:
+                with open('results.json', 'w', encoding='utf-8') as f:
+                    json.dump(results, f, ensure_ascii=False, indent=2)
+                logger.info("Wrote results.json with per-account outcomes")
+            except Exception:
+                logger.exception("Failed to write results.json")
+
             failed = [r for r in results if not r.get('success')]
             if failed:
                 body_lines = ["Check-in run completed with failures:\n"]
