@@ -263,28 +263,61 @@ async def run_checkin():
                         logger.info(f"[{username}] Already signed in today.")
                         acct_result.update({"success": True})
                     else:
-                        clicked = await page.evaluate("""
-                            () => {
-                                var el = document.querySelector('#sign_title');
-                                if (!el) return 'not-found';
-                                var parent = el.closest('a, button, [onclick], .btn, [data-toggle]');
-                                if (parent) { parent.click(); return 'clicked-parent'; }
-                                el.click();
-                                var evt = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
-                                el.dispatchEvent(evt);
-                                return 'clicked-self';
-                            }
-                        """)
-                        logger.info(f"[{username}] Click result: {clicked}")
-                        await asyncio.sleep(4)
+                        # Log outerHTML for debugging before clicking
+                        try:
+                            el = await page.query_selector("#sign_title")
+                            if el:
+                                outer = await el.evaluate("e => e.outerHTML")
+                                logger.info(f"[{username}] sign_title outerHTML before click: {outer}")
+                        except Exception:
+                            logger.exception("Failed to read sign_title outerHTML before click")
+
+                        success_click = False
+                        click_result = None
+                        # Try clicking up to 3 times and wait for the text to change
+                        for attempt in range(1, 4):
+                            click_result = await page.evaluate("""
+                                () => {
+                                    var el = document.querySelector('#sign_title');
+                                    if (!el) return 'not-found';
+                                    var parent = el.closest('a, button, [onclick], .btn, [data-toggle]');
+                                    if (parent) { parent.click(); return 'clicked-parent'; }
+                                    el.click();
+                                    var evt = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
+                                    el.dispatchEvent(evt);
+                                    return 'clicked-self';
+                                }
+                            """)
+                            logger.info(f"[{username}] Click attempt {attempt}: {click_result}")
+                            try:
+                                await page.wait_for_function(
+                                    "() => document.querySelector('#sign_title') && document.querySelector('#sign_title').innerText.includes('今日已签到')",
+                                    timeout=8000
+                                )
+                                success_click = True
+                                logger.info(f"[{username}] Sign-in text changed after click attempt {attempt}")
+                                break
+                            except Exception:
+                                logger.info(f"[{username}] wait_for_function timeout after attempt {attempt}")
+                                await asyncio.sleep(2)
+
                         await take_screenshot(page, "05_after_sign_click", account_name=username)
+
+                        # Re-evaluate sign element and text
                         sign_element = await page.query_selector("#sign_title")
                         if sign_element:
                             sign_text = await sign_element.inner_text()
+                            logger.info(f"[{username}] Sign-in text after attempts: '{sign_text}'")
                             if "今日已签到" in sign_text:
                                 logger.info(f"[{username}] Sign-in completed successfully")
                                 acct_result.update({"success": True})
                             else:
+                                # Capture outerHTML to help debugging
+                                try:
+                                    outer_after = await sign_element.evaluate("e => e.outerHTML")
+                                    logger.info(f"[{username}] sign_title outerHTML after attempts: {outer_after}")
+                                except Exception:
+                                    logger.exception("Failed to read sign_title outerHTML after attempts")
                                 msg = "Sign-in did not indicate success after click"
                                 logger.warning(f"[{username}] {msg}")
                                 acct_result.update({"error": msg})
