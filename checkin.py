@@ -131,6 +131,27 @@ async def run_checkin():
         return 1
 
     results = []
+    # Support running only a specific account via env vars for targeted reruns
+    only_username = os.environ.get("CAIGAMER_ONLY_USERNAME")
+    only_index = os.environ.get("CAIGAMER_ONLY_INDEX")
+    run_filter = None
+    if only_username:
+        original = len(accounts)
+        accounts = [a for a in accounts if a.get("username") == only_username]
+        run_filter = {"only_username": only_username, "original_count": original}
+        logger.info(f"Filtering to only run account username={only_username} (found {len(accounts)})")
+    elif only_index:
+        try:
+            idx = int(only_index) - 1
+            original = len(accounts)
+            if 0 <= idx < len(accounts):
+                accounts = [accounts[idx]]
+                run_filter = {"only_index": only_index, "original_count": original}
+                logger.info(f"Filtering to only run account index={only_index}")
+            else:
+                logger.warning(f"CAIGAMER_ONLY_INDEX {only_index} out of range; running all accounts")
+        except Exception:
+            logger.warning("Invalid CAIGAMER_ONLY_INDEX value; running all accounts")
     async with async_playwright() as p:
         try:
             # Run each account in its own browser instance to isolate failures
@@ -403,9 +424,10 @@ async def run_checkin():
             # If there are errors, attempt to send summary email
             # Write per-account results to a JSON file for separate presentation
             try:
+                out = {"run_filter": run_filter, "results": results}
                 with open('results.json', 'w', encoding='utf-8') as f:
-                    json.dump(results, f, ensure_ascii=False, indent=2)
-                logger.info("Wrote results.json with per-account outcomes")
+                    json.dump(out, f, ensure_ascii=False, indent=2)
+                logger.info("Wrote results.json with per-account outcomes and run_filter")
             except Exception:
                 logger.exception("Failed to write results.json")
 
