@@ -132,26 +132,27 @@ async def run_checkin():
 
     results = []
     async with async_playwright() as p:
-        browser = None
         try:
-            logger.info("Launching Chromium browser...")
-            browser = await p.chromium.launch(
-                headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-gpu",
-                    "--font-render-hinting=none",
-                    "--disable-font-subpixel-positioning",
-                    "--enable-font-antialiasing"
-                ]
-            )
-
+            # Run each account in its own browser instance to isolate failures
             for acct in accounts:
                 username = acct.get("username")
                 password = acct.get("password")
                 acct_result = {"username": username, "success": False, "error": None}
+                browser = None
                 try:
+                    logger.info(f"Launching Chromium browser for {username}...")
+                    browser = await p.chromium.launch(
+                        headless=True,
+                        args=[
+                            "--no-sandbox",
+                            "--disable-dev-shm-usage",
+                            "--disable-gpu",
+                            "--font-render-hinting=none",
+                            "--disable-font-subpixel-positioning",
+                            "--enable-font-antialiasing"
+                        ]
+                    )
+
                     context = await browser.new_context(
                         viewport={"width": 1920, "height": 1080},
                         locale="zh-CN",
@@ -340,6 +341,14 @@ async def run_checkin():
                     acct_result.update({"error": str(e)})
                     results.append(acct_result)
 
+                finally:
+                    if browser:
+                        logger.info(f"Closing browser for {username}...")
+                        try:
+                            await browser.close()
+                        except Exception:
+                            logger.exception(f"Error closing browser for {username}")
+
             return_code = 0
             # If there are errors, attempt to send summary email
             failed = [r for r in results if not r.get('success')]
@@ -364,11 +373,6 @@ async def run_checkin():
             attachments = sorted(glob.glob('page_*.png'), reverse=True)[:10]
             send_error_email("Caigamer check-in: unexpected failure", tb, attachments=attachments)
             return 1
-
-        finally:
-            if browser:
-                logger.info("Closing browser...")
-                await browser.close()
 
 if __name__ == "__main__":
     exit_code = asyncio.run(run_checkin())
